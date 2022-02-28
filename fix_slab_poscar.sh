@@ -19,6 +19,6 @@ flx=" T T T"
 tail -n $natom $1 | sed -e "s/\r//g" | \
 awk '{if ($3 > '$lwlimit' && $3 < '$uplimit') \
      print $1, $2, $3, " F F F"; \
-else print $1, $2, $2, " T T T"} ' >> $new_file
+else print $1, $2, $3, " T T T"} ' >> $new_file
 
 
