@@ -1,0 +1,192 @@
+!!  Calculates probability distribution of all bonds and all angles
+!!  Takes the bond and angle list from lammps data file and then calculates bond distance and angles 
+!! accordingly.
+! INPUT(21) input_Validate_flex.dat
+! OUTPUT(31) bond_validate_flex.dat
+! OUTPUT(32) ang_validate_flex.dat
+!! 27April22: Code improvement, integer*8 was used to define bond and ang (lots of memory)
+
+PROGRAM VALIDATE_FLEX
+  IMPLICIT NONE
+  REAL*8, ALLOCATABLE, DIMENSION(:)::RX, RY, RZ
+  REAL*8::  X, Y, Z, RIJ(3), RIJ2, RJK(3), BOX(3), BOX_INV(3), RIJ_MAX,&
+            DBOND, DANG, DDHI, DIMP, DBOND_INV, DANG_INV, DDHI_INV, DIMP_INV,&
+            DBOND_2, DANG_2, BOX_VEC(3,3), XY, XZ, YZ
+  INTEGER, ALLOCATABLE, DIMENSION(:):: COUNT_B, COUNT_A, B_LIST_TYPE, A_LIST_TYPE,&
+            B_LIST_AI, B_LIST_AJ, A_LIST_AI, A_LIST_AJ, A_LIST_AK
+  INTEGER*8, ALLOCATABLE::BOND_DIS(:,:), ANG_DIS(:,:)
+  INTEGER:: I, J, K, HEAD_TRAJ, TAIL_TRAJ, HEAD_LIST, NFRAME, NSKIP, NATOM,&
+            NBOND, NANG, NDIHED, NIMPROP, NBIN_B, NBIN_A, NBIN_D, NBIN_I,&
+            NBONDT, NANGT, NDIHEDT, NIMPROPT, TRAJ_COUNT, TOTAL_SKIP,&
+            IY, AI, AJ, AK,IG, ABOX(3)
+
+  CHARACTER*50:: TRAJFILE, LISTFILE , GROFORMAT, BOND_FORMAT, ANG_FORMAT
+  CHARACTER*4::  RAN_C1, RAN_C2
+
+  GROFORMAT  = '(i5,2a5,i5,3f8.3)'
+  OPEN(21,FILE="input_Validate_flex.dat")
+  READ(21,*) TRAJFILE
+  READ(21,*) HEAD_TRAJ, TAIL_TRAJ
+  READ(21,*) NFRAME, NSKIP
+  READ(21,*) NATOM 
+  READ(21,*) (BOX(I), I = 1, 3)
+  READ(21,*) XY, XZ, YZ
+  READ(21,*) NBONDT, NANGT, NDIHEDT, NIMPROPT
+  READ(21,*) NBOND,  NANG,  NDIHED,  NIMPROP
+  READ(21,*) RIJ_MAX
+  READ(21,*) NBIN_B, NBIN_A, NBIN_D, NBIN_I
+  READ(21,*) LISTFILE
+  READ(21,*) HEAD_LIST
+  
+  DBOND = RIJ_MAX/DBLE(NBIN_B)
+  DANG  = 2.0/DBLE(NBIN_A)
+  DDHI  = 2.0/DBLE(NBIN_D)
+  DIMP  = 2.0/DBLE(NBIN_I)
+  
+  DBOND_INV = 1.0D0 /DBOND
+  DANG_INV  = 1.0D0/DANG
+  DDHI_INV  = 1.0D0/DDHI 
+  DIMP_INV  = 1.0D0/DIMP
+  DBOND_2   = DBOND/2.0D0
+  DANG_2    = DANG/2.0D0
+  BOX_INV   = 1.0D0/BOX ! BOX VECTOR
+  BOX_VEC = 0.0
+  DO I = 1, 3
+    BOX_VEC(I,I)= BOX(I)
+  END DO
+  BOX_VEC(1,2) = XY ; BOX_VEC(1,3)= XZ
+  BOX_VEC(2,3) = YZ
+  PRINT*, BOX_VEC(1,:)
+  PRINT*, BOX_VEC(2,:)
+  PRINT*, BOX_VEC(3,:)
+  WRITE(BOND_FORMAT,'(A11,I0,A10)') '"(F10.8,2X,', NBONDT,'F10.8,1X)"'
+  WRITE(ANG_FORMAT,*) "'(F10.8, 2X,", NANGT, "(F10.8, 1X))'"
+  
+  PRINT*, "TRAJECTORY FILE ", TRIM(TRAJFILE)
+  PRINT*, "NO OF BONDS, ANGLE, DIHEDRAL, IMPROPER"
+  PRINT*, NBOND, NANG,       NDIHED, NIMPROP
+  PRINT*, "TYPE OF BONDS, ANGLE, DIHEDRAL, IMPROPER"
+  PRINT*, NBONDT, NANGT,     NDIHEDT, NIMPROPT
+  PRINT*, "NO OF BIN: ",     NBIN_B, NBIN_A, NBIN_D, NBIN_I
+  PRINT*, "BIN THICKNESS",   DBOND, DANG, DDHI, DIMP
+  PRINT*, "MAX BOND STRECH", RIJ_MAX
+  PRINT*, "LIST FILE ",      TRIM(LISTFILE)
+  PRINT*, "BOND_FROMAT",     TRIM(BOND_FORMAT)
+  PRINT*, "ANG_FROMAT",      TRIM(ANG_FORMAT)
+
+  J = NBIN_A/2
+  ALLOCATE( COUNT_B(NBONDT), BOND_DIS(NBONDT,0:NBIN_B), &
+             B_LIST_TYPE(NBOND), B_LIST_AI(NBOND), B_LIST_AJ(NBOND), &
+             COUNT_A(NANGT),  ANG_DIS(NANGT,-J:J),&
+             A_LIST_TYPE(NANG), A_LIST_AI(NANG), A_LIST_AJ(NANG), &
+             A_LIST_AK(NANG), RX(NATOM), RY(NATOM), RZ(NATOM) )
+            !COUNT_D(NDIHEDT),  DIHED_DIS(NDIHED,-NBIN_D/2:NBIN_D/2), D_LIST_TYPE(NDIHED), D_LIST_AI(NDIHED), D_LIST_AJ(NDIHED), D_LIST_AK(NDIHED), &
+            !COUNT_A(NANGT),  ANG_DIS(NANGT,-NBIN_A/2:NBIN_A/2), A_LIST_TYPE(NANG), A_LIST_AI(NANG), A_LIST_AJ(NANG), A_LIST_AK(NANG), &
+            
+  OPEN (22,FILE=TRIM(LISTFILE), STATUS='OLD')
+  DO I = 1, HEAD_LIST
+    READ(22,*) ! SKIP
+  END DO
+  READ(22,*) ! BONDLIST
+  READ(22,*) ! BLANK
+  DO I =1 , NBOND
+    READ(22,*) J, B_LIST_TYPE(I), B_LIST_AI(I), B_LIST_AJ(I)
+  END DO 
+  READ(22,*) !BLANK
+  READ(22,*) !ANGLE LIST
+  READ(22,*) !BLANK
+  DO I = 1, NANG 
+    READ(22,*) J, A_LIST_TYPE(I), A_LIST_AI(I), A_LIST_AJ(I), A_LIST_AK(I)
+  END DO
+  CLOSE(22)
+  PRINT*, "PARAMETER READ PROPERLY" 
+ 
+  COUNT_B = 0
+  COUNT_A = 0
+  BOND_DIS= 0
+  ANG_DIS = 0
+  TOTAL_SKIP = (NSKIP-1)*(HEAD_TRAJ+TAIL_TRAJ+NATOM)
+  OPEN(23,FILE=TRIM(TRAJFILE),STATUS='OLD')
+  NFRAME =  INT(NFRAME/NSKIP)
+  
+  OPEN(31,FILE="bond_raw.dat")
+  OPEN(32,FILE="angle_raw.dat")
+  DO TRAJ_COUNT = 1, NFRAME
+    PRINT*, "TRAJ_COUNT ", TRAJ_COUNT, "/",  NFRAME 
+    DO I = 1, HEAD_TRAJ
+      READ(23,*) ! SKIP
+    END DO    
+    DO I = 1, NATOM  
+      READ(23,GROFORMAT) J,RAN_C1,RAN_C2,K, RX(I), RY(I), RZ(I)
+    END DO    
+    DO I =1, TAIL_TRAJ
+      READ(23,*) !! SKIP
+    END DO
+    WRITE(31,*) "#", TRAJ_COUNT
+    DO I = 1, NBOND
+      AI = B_LIST_AI(I)
+      AJ = B_LIST_AJ(I)
+      IY = B_LIST_TYPE(I)      
+      RIJ(1) =  RX(AI) - RX(AJ)
+      RIJ(2) =  RY(AI) - RY(AJ)
+      RIJ(3) =  RZ(AI) - RZ(AJ)
+      ABOX   = ANINT(RIJ*BOX_INV)
+      
+      RIJ(1) =  RIJ(1)-DOT_PRODUCT(ABOX,BOX_VEC(1,:))
+      RIJ(2) =  RIJ(2)-DOT_PRODUCT(ABOX,BOX_VEC(2,:))
+      RIJ(3) =  RIJ(3)-DOT_PRODUCT(ABOX,BOX_VEC(3,:))
+      RIJ    =  RIJ-ANINT(RIJ*BOX_INV)*BOX         
+      RIJ2   = DSQRT(DOT_PRODUCT(RIJ,RIJ))
+      IG     = INT(RIJ2*DBOND_INV) 
+      COUNT_B(IY)      =  COUNT_B(IY) + 1
+      BOND_DIS(IY, IG) =  BOND_DIS(IY,IG) + 1      
+      WRITE(31,*) IY, AI, AJ, RIJ2
+    END DO
+    WRITE(31,*)
+    WRITE(32,*) "#", TRAJ_COUNT
+    DO I = 1, NANG
+      AI = A_LIST_AI(I)
+      AJ = A_LIST_AJ(I)
+      AK = A_LIST_AK(I)
+      IY = A_LIST_TYPE(I)
+      X = RX(AJ)
+      Y = RY(AJ)
+      Z = RZ(AJ)
+      RIJ(1) =  RX(AI) - X
+      RIJ(2) =  RY(AI) - Y
+      RIJ(3) =  RZ(AI) - Z
+      RJK(1) =  RX(AK) - X
+      RJK(2) =  RY(AK) - Y
+      RJK(3) =  RZ(AK) - Z
+      RIJ    =  RIJ -ANINT(RIJ*BOX_INV)*BOX 
+      RJK    =  RJK -ANINT(RJK*BOX_INV)*BOX 
+      RIJ2   =  DOT_PRODUCT(RIJ,RJK)/DSQRT(DOT_PRODUCT(RIJ, RIJ)*DOT_PRODUCT(RJK,RJK)) != COS(THETA)
+      IG     =  INT(RIJ2*DANG_INV) 
+      COUNT_A(IY)      =  COUNT_A(IY)    + 1
+      ANG_DIS(IY, IG)  =  ANG_DIS(IY,IG) + 1
+      WRITE(32,*) IY, AI, AJ, AK, RIJ2
+    END DO
+    WRITE(32,*)
+    DO I = 1, TOTAL_SKIP
+      READ(23,*) ! SKIP
+    END DO
+  END DO
+  CLOSE(31)
+  CLOSE(32)
+  PRINT*, "TRAJECTORY READ "
+  
+  OPEN(31,FILE="bond_validate_flex.dat")
+  DO I = 0, NBIN_B
+    WRITE(31,'(F10.5,*(F15.10, 1X))') DBLE(I)*DBOND+DBOND_2, (DBLE(BOND_DIS(J,I))/DBLE(COUNT_B(J)), J = 1, NBONDT)
+  END DO
+  CLOSE(31)
+  PRINT*, "BONDS DONE"
+  OPEN(32,FILE="ang_validate_flex.dat")
+  K= INT(NBIN_A/2)
+  DO I =-K,K
+    IF (I==0) CYCLE
+    WRITE(32,'(F10.5,*(F15.10,1X))') DBLE(I)*DANG, (DBLE(ANG_DIS(J,I))/DBLE(COUNT_A(J)), J = 1, NANGT)
+  END DO
+  CLOSE(32)
+  PRINT*,"ANGLES DONE"
+END PROGRAM VALIDATE_FLEX
